@@ -2,14 +2,20 @@
 #   This file is part of DirectSum.jl. It is licensed under the GPL license
 #   Grassmann Copyright (C) 2019 Michael Reed
 
-const pre = ("v","w")
+# vector and co-vector prefix
+const pre = ("v","w","ϵ","∂")
+
+# vector space and dual-space symbols
 const vsn = (:V,:VV,:W)
+
+# alpha-numeric digits
 const digs = "1234567890"
 const low_case,upp_case = "abcdefghijklmnopqrstuvwxyz","ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 const low_greek,upp_greek = "αβγδϵζηθικλμνξοπρστυφχψω","ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΡΣΤΥΦΨΩ"
 const alphanumv = digs*low_case*upp_case #*low_greek*upp_greek
 const alphanumw = digs*upp_case*low_case #*upp_greek*low_greek
 
+# subscript index
 const subs = Dict{Int,Char}(
    -1 => vio[1],
     0 => vio[2],
@@ -26,6 +32,7 @@ const subs = Dict{Int,Char}(
     [j=>alphanumv[j] for j ∈ 11:36]...
 )
 
+# superscript index
 const sups = Dict{Int,Char}(
    -1 => vio[1],
     0 => vio[2],
@@ -44,17 +51,19 @@ const sups = Dict{Int,Char}(
 
 const VTI = Union{Vector{Int},Tuple,NTuple}
 
-@inline function indexbits(d::Integer,b::VTI)
-    out = falses(d)
-    for k ∈ b
+# converts indices into BitArray of length N
+@inline function indexbits(N::Integer,indices::VTI)
+    out = falses(N)
+    for k ∈ indices
         out[k] = true
     end
     return out
 end
 
+# index sets
 @pure indices(b::Bits) = findall(digits(b,base=2).==1)
-@pure shift_indices(V::VectorSpace,b::Bits) = shift_indices(V,indices(b))
-function shift_indices(s::VectorSpace{N,M} where N,set::Vector{Int}) where M
+@pure shift_indices(V::T,b::Bits) where T<:VectorSpace = shift_indices(V,indices(b))
+function shift_indices(s::T,set::Vector{Int}) where T<:VectorSpace{N,M} where N where M
     if !isempty(set)
         k = 1
         hasinf(s) && set[1] == 1 && (set[1] = -1; k += 1)
@@ -65,19 +74,34 @@ function shift_indices(s::VectorSpace{N,M} where N,set::Vector{Int}) where M
     return set
 end
 
-@inline printindex(i,e::String=pre[1],t=i>36) = (e≠pre[1])⊻t ? sups[t ? i-26 : i] : subs[t ? i-26 : i]
-@inline printindices(io::IO,b::VTI,e::String=pre[1]) = print(io,e,[printindex(i,e) for i ∈ b]...)
-@inline function printindices(io::IO,a::VTI,b::VTI,e::String=pre[1],f::String=pre[2])
-    F = !isempty(b)
-    !(F && isempty(a)) && printindices(io,a,e)
-    F && printindices(io,b,f)
+# printing of indices
+@inline function printindex(i,l::Bool=false,e::String=pre[1],t=i>36,j=t ? i-26 : i)
+    (l&&(0≤j≤9)) ? j : ((e∉pre[[1,3]])⊻t ? sups[j] : subs[j])
+ end
+@inline printindices(io::IO,b::VTI,l::Bool=false,e::String=pre[1]) = print(io,e,[printindex(i,l,e) for i ∈ b]...)
+@inline printindices(io::IO,a::VTI,b::VTI,l::Bool=false,e::String=pre[1],f::String=pre[2]) = printindices(io,a,b,Int[],Int[],l,e,f)
+@inline function printindices(io::IO,a::VTI,b::VTI,c::VTI,d::VTI,l::Bool=false,e::String=pre[1],f::String=pre[2],g::String=pre[3],h::String=pre[4])
+    A,B,C,D = isempty(a),!isempty(b),!isempty(c),!isempty(d)
+    !((B || C || D) && A) && printindices(io,a,l,e)
+    B && printindices(io,b,l,f)
+    C && printindices(io,c,l,g)
+    D && printindices(io,d,l,h)
 end
-@inline function printindices(io::IO,V::VectorSpace,e::Bits)
-    C = dualtype(V)
+@pure function printindices(io::IO,V::T,e::Bits,label::Bool=false) where T<:VectorSpace
+    N,D,C,db = ndims(V),diffmode(V),dualtype(V),dualbits(V)
     if C < 0
-        N = Int(ndims(V)/2)
-        printindices(io,shift_indices(V,e & Bits(2^N-1)),shift_indices(V,e>>N))
+        es = e & (~(db[1]|db[2]))
+        n = Int((N-2D)/2)
+        eps = shift_indices(V,e & db[1]).-(N-2D)
+        par = shift_indices(V,e & db[2]).-(N-D)
+        printindices(io,shift_indices(V,es & Bits(2^n-1)),shift_indices(V,es>>n),eps,par,label)
     else
-        printindices(io,shift_indices(V,e),C>0 ? pre[2] : pre[1])
+        es = e & (~db)
+        eps = shift_indices(V,e & db).-(N-D)
+        if !isempty(eps)
+            printindices(io,shift_indices(V,es),Int[],C>0 ? Int[] : eps,C>0 ? eps : Int[],label,C>0 ? pre[2] : pre[1])
+        else
+            printindices(io,shift_indices(V,es),label,C>0 ? pre[2] : pre[1])
+        end
     end
 end

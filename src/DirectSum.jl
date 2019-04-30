@@ -3,7 +3,7 @@ module DirectSum
 #   This file is part of DirectSum.jl. It is licensed under the GPL license
 #   Grassmann Copyright (C) 2019 Michael Reed
 
-export VectorSpace, Signature, DiagonalForm, ℝ, ⊕, value
+export VectorSpace, Signature, DiagonalForm, ℝ, ⊕, value, tangent
 import Base: getindex, abs, @pure, +, *, ^, ∪, ∩, ⊆, ⊇
 import LinearAlgebra: det
 using StaticArrays
@@ -29,14 +29,15 @@ SUB(x::SArray{Tuple{M},T,1,M} where M) where T<:Any = broadcast(SUB,x)
 
 ## VectorSpace{N}
 
-abstract type VectorSpace{Indices,Options,Metrics} end
+abstract type VectorSpace{Indices,Options,Metrics,Diff} end
 
 ## Signature{N}
 
-struct Signature{Indices,Options,Signatures} <: VectorSpace{Indices,Options,Signatures}
-    @pure Signature{N,M,S}() where {N,M,S} = new{N,M,S}()
+struct Signature{Indices,Options,Signatures,Diff} <: VectorSpace{Indices,Options,Signatures,Diff}
+    @pure Signature{N,M,S,D}() where {N,M,S,D} = new{N,M,S,D}()
 end
 
+@pure Signature{N,M,S}() where {N,M,S} = Signature{N,M,S,0}()
 @pure Signature{N,M}(b::BitArray{1}) where {N,M} = Signature{N,M,bit2int(b[1:N])}()
 @pure Signature{N,M}(b::Array{Bool,1}) where {N,M} = Signature{N,M}(convert(BitArray{1},b))
 @pure Signature{N,M}(s::String) where {N,M} = Signature{N,M}([k=='-' for k∈s])
@@ -53,14 +54,14 @@ end
     end
 end
 
-function getindex(::Signature{N,M,S} where {N,M},i::Int) where S
+function getindex(::Signature{N,M,S,D} where M,i::Int) where {N,S,D}
     d = one(Bits) << (i-1)
     return (d & S) == d
 end
 
 getindex(vs::Signature,i::Vector) = [getindex(vs,j) for j ∈ i]
 getindex(vs::Signature,i::UnitRange{Int}) = [getindex(vs,j) for j ∈ i]
-getindex(vs::Signature{N,M,S} where M,i::Colon) where {N,S} = getindex(vs,1:N)
+getindex(vs::Signature{N,M,S,D} where S,i::Colon) where {N,M,D} = getindex(vs,1:N-(dualtype(vs)<0 ? 2D : D))
 Base.firstindex(m::VectorSpace) = 1
 Base.lastindex(m::VectorSpace{N}) where N = N
 Base.length(s::VectorSpace{N}) where N = N
@@ -69,19 +70,25 @@ Base.length(s::VectorSpace{N}) where N = N
 
 @inline function Base.show(io::IO,s::Signature)
     print(io,'⟨')
+    C,d = dualtype(s),diffmode(s)
+    N = ndims(s)-(d>0 ? (C<0 ? 2d : d) : 0)
     hasinf(s) && print(io,vio[1])
     hasorigin(s) && print(io,vio[2])
-    print(io,sig.(s[hasinf(s)+hasorigin(s)+1:ndims(s)])...)
+    d<0 && print(io,[subs[x] for x ∈ abs(d):-1:1]...)
+    print(io,sig.(s[hasinf(s)+hasorigin(s)+1+(d<0 ? abs(d) : 0):N])...)
+    d>0 && print(io,[(C>0 ? sups : subs)[x] for x ∈ 1:abs(d)]...)
+    d>0 && C<0 && print(io,[sups[x] for x ∈ 1:abs(d)]...)
     print(io,'⟩')
-    C = dualtype(s)
     C ≠ 0 ? print(io, C < 0 ? '*' : ''') : nothing
 end
 
 ## DiagonalForm{N}
 
-struct DiagonalForm{Indices,Options,Signatures} <: VectorSpace{Indices,Options,Signatures}
-    @pure DiagonalForm{N,M,S}() where {N,M,S} = new{N,M,S}()
+struct DiagonalForm{Indices,Options,Signatures,Diff} <: VectorSpace{Indices,Options,Signatures,Diff}
+    @pure DiagonalForm{N,M,S,D}() where {N,M,S,D} = new{N,M,S,D}()
 end
+
+@pure DiagonalForm{N,M,S}() where {N,M,S} = DiagonalForm{N,M,S,0}()
 
 @pure diagonalform(V::DiagonalForm{N,M,S} where N) where {M,S} = dualtype(V)>0 ? SUB(diagonalform_cache[S]) : diagonalform_cache[S]
 
@@ -108,14 +115,18 @@ getindex(vs::DiagonalForm{N,M,S} where M,i::Colon) where {N,S} = diagonalform(vs
 
 @inline function Base.show(io::IO,s::DiagonalForm)
     print(io,'⟨')
+    C,d = dualtype(s),diffmode(s)
+    N = ndims(s)-(d>0 ? (C<0 ? 2d : d) : 0)
     hasinf(s) && print(io,vio[1])
     hasorigin(s) && print(io,vio[2])
-    for k ∈ hasinf(s)+hasorigin(s)+1:ndims(s)
+    d<0 && print(io,[subs[x] for x ∈ abs(d):-1:1]...)
+    for k ∈ hasinf(s)+hasorigin(s)+1+(d<0 ? abs(d) : 0):N
         print(io,s[k])
         k ≠ ndims(s) && print(io,',')
     end
+    d>0 && print(io,[(C>0 ? sups : subs)[x] for x ∈ 1:abs(d)]...)
+    d>0 && C<0 && print(io,[sups[x] for x ∈ 1:abs(d)]...)
     print(io,'⟩')
-    C = dualtype(s)
     C ≠ 0 ? print(io, C < 0 ? '*' : ''') : nothing
 end
 
@@ -149,21 +160,43 @@ end
 
 # generic
 
-@pure Base.ndims(::VectorSpace{N}) where N = N
+@pure Base.ndims(::T) where T<:VectorSpace{N} where N = N
 @pure hasinf(M::Int) = M ∈ (1,3,5,7,9,11)
 @pure hasorigin(M::Int) = M ∈ (2,3,6,7,10,11)
 @pure dualtype(M::Int) = M ∈ 8:11 ? -1 : Int(M ∈ (4,5,6,7))
-@pure hasinf(::VectorSpace{N,M} where N) where M = hasinf(M)
-@pure hasorigin(::VectorSpace{N,M} where N) where M = hasorigin(M)
-@pure dualtype(::VectorSpace{N,M} where N) where M = dualtype(M)
-@pure options(::VectorSpace{N,M} where N) where M = M
-@pure options_list(V::VectorSpace) = hasinf(V),hasorigin(V),dualtype(V)
-@pure value(::VectorSpace{N,M,S} where {N,M}) where S = S
+@pure hasinf(::T) where T<:VectorSpace{N,M} where N where M = hasinf(M)
+@pure hasorigin(::T) where T<:VectorSpace{N,M} where N where M = hasorigin(M)
+@pure dualtype(::T) where T<:VectorSpace{N,M} where N where M = dualtype(M)
+@pure options(::T) where T<:VectorSpace{N,M} where N where M = M
+@pure options_list(V::T) where T<:VectorSpace = hasinf(V),hasorigin(V),dualtype(V)
+@pure value(::T) where T<:VectorSpace{N,M,S} where {N,M} where S = S
+@pure diffmode(::T) where T<:VectorSpace{N,M,S,D} where {N,M,S} where D = D
 
 det(s::Signature) = isodd(count_ones(value(s))) ? -1 : 1
 det(s::DiagonalForm) = PROD(diagonalform(s))
 
 abs(s::VectorSpace) = sqrt(abs(det(s)))
+
+@pure function dualbits(V::T) where T<:VectorSpace
+    d = diffmode(V)
+    if dualtype(V)<0
+        v = ((one(Bits)<<d)-1)<<(ndims(V)-2d)
+        w = ((one(Bits)<<d)-1)<<(ndims(V)-d)
+        return d<0 ? (typemax(Bits)-v,typemax(Bits)-w) : (v,w)
+    end
+    v = ((one(Bits)<<d)-1)<<(ndims(V)-d)
+    d<0 ? typemax(Bits)-v : v
+end
+
+@pure function dualcheck(V::T,A::Bits,B::Bits) where T<:VectorSpace
+    d = diffmode(V)
+    db = dualbits(V)
+    v = dualtype(V)<0 ? db[1]|db[2] : db
+    (hasinf(V) && isodd(A) && isodd(B)) || (d≠0 && count_ones((A&v)&(B&v))≠0)
+end
+
+tangent(s::Signature{N,M,S,D},d::Int=1) where {N,M,S,D} = Signature{N+abs(d),M,S,D+d}()
+tangent(s::DiagonalForm{N,M,S,D},d::Int=1) where {N,M,S,D} = DiagonalForm{N+abs(d),M,S,D+d}()
 
 export metric
 
@@ -172,21 +205,21 @@ export metric
 
 # dual involution
 
-dual(V::VectorSpace) = dualtype(V)<0 ? V : V'
-dual(V::VectorSpace{N},B,M=Int(N/2)) where N = ((B<<M)&((1<<N)-1))|(B>>M)
+dual(V::T) where T<:VectorSpace = dualtype(V)<0 ? V : V'
+dual(V::T,B,M=Int(N/2)) where T<:VectorSpace{N} where N = ((B<<M)&((1<<N)-1))|(B>>M)
 
 @pure flip_sig(N,S::Bits) = Bits(2^N-1) & (~S)
 
-@pure function Base.adjoint(V::Signature{N,M,S}) where {N,M,S}
+@pure function Base.adjoint(V::Signature{N,M,S,D}) where {N,M,S,D}
     C = dualtype(V)
     C < 0 && throw(error("$V is the direct sum of a vector space and its dual space"))
-    Signature{N,doc2m(hasinf(V),hasorigin(V),Int(!Bool(C))),flip_sig(N,S)}()
+    Signature{N,doc2m(hasinf(V),hasorigin(V),Int(!Bool(C))),flip_sig(N,S),D}()
 end
 
-@pure function Base.adjoint(V::DiagonalForm{N,M,S}) where {N,M,S}
+@pure function Base.adjoint(V::DiagonalForm{N,M,S,D}) where {N,M,S,D}
     C = dualtype(V)
     C < 0 && throw(error("$V is the direct sum of a vector space and its dual space"))
-    DiagonalForm{N,doc2m(hasinf(V),hasorigin(V),Int(!Bool(C))),S}()
+    DiagonalForm{N,doc2m(hasinf(V),hasorigin(V),Int(!Bool(C))),S,D}()
 end
 
 ## default definitions
