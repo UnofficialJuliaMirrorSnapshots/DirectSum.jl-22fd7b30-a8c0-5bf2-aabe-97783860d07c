@@ -234,27 +234,29 @@ end
 
 @pure abs(s::M) where M<:Manifold = sqrt(abs(det(s)))
 
+@pure hasconformal(V) = hasinf(V) && hasorigin(V)
+
 @pure hasorigin(V::M, B::T) where {M<:Manifold,T<:Bits} = hasinf(V) ? (Bits(2)&B)==Bits(2) : isodd(B)
 
 @pure function hasinf(V::T,A::Bits,B::Bits) where T<:Manifold
-    hasinf(V) && (isodd(A) || isodd(B))
+    hasconformal(V) && (isodd(A) || isodd(B))
 end
 @pure function hasorigin(V::T,A::Bits,B::Bits) where T<:Manifold
-    hasorigin(V) && (hasorigin(V,A) || hasorigin(V,B))
+    hasconformal(V) && (hasorigin(V,A) || hasorigin(V,B))
 end
 
 @pure function hasinf2(V::T,A::Bits,B::Bits) where T<:Manifold
-    hasinf(V) && isodd(A) && isodd(B)
+    hasconformal(V) && isodd(A) && isodd(B)
 end
 @pure function hasorigin2(V::T,A::Bits,B::Bits) where T<:Manifold
-    hasorigin(V) && hasorigin(V,A) && hasorigin(V,B)
+    hasconformal(V) && hasorigin(V,A) && hasorigin(V,B)
 end
 
 @pure function hasorigininf(V::T,A::Bits,B::Bits) where T<:Manifold
-    hasinf(V) && hasorigin(V) && hasorigin(V,A) && isodd(B) && !hasorigin(V,B) && !isodd(A)
+    hasconformal(V) && hasorigin(V,A) && isodd(B) && !hasorigin(V,B) && !isodd(A)
 end
 @pure function hasinforigin(V::T,A::Bits,B::Bits) where T<:Manifold
-    hasinf(V) && hasorigin(V) && isodd(A) && hasorigin(V,B) && !isodd(B) && !hasorigin(V,A)
+    hasconformal(V) && isodd(A) && hasorigin(V,B) && !isodd(B) && !hasorigin(V,A)
 end
 
 @pure function hasinf2origin(V::T,A::Bits,B::Bits) where T<:Manifold
@@ -302,6 +304,13 @@ end
 
 @pure tangent(s::Signature{N,M,S,F,D},d::Int=1,f::Int=F≠0 ? F : 1) where {N,M,S,F,D} = Signature{N+(mixedmode(s)<0 ? 2f : f),M,S,f,D+d}()
 @pure tangent(s::DiagonalForm{N,M,S,F,D},d::Int=1,f::Int=F≠0 ? F : 1) where {N,M,S,F,D} = DiagonalForm{N+(mixedmode(s)<0 ? 2f : f),M,S,f,D+d}()
+
+@pure subtangent(V) = V(grade(V)+1:ndims(V)...)
+
+for M ∈ (:Signature,:DiagonalForm)
+    @eval @pure loworder(V::$M{N,M,S,D,O}) where {N,M,S,D,O} = O≠0 ? $M{N,M,S,D,O-1}() : V
+end
+@pure loworder(::SubManifold{N,M,S}) where {N,M,S} = SubManifold{N,loworder(M),S}()
 
 export metric
 
